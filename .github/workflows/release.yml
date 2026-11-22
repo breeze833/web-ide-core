@@ -1,0 +1,86 @@
+name: Build and Release web-ide-core
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Test & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run Test Suite
+        run: npm test
+
+      - name: Package Distribution Archive
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: npm run pack:tgz
+
+      - name: Publish Versioned Release (v* Tag)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "web-ide-core ${{ github.ref_name }}"
+          generate_release_notes: true
+          make_latest: "true"
+          files: |
+            dist/*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rolling Update 'latest' Git Tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f latest "${{ github.sha }}"
+          git push --force origin refs/tags/latest
+
+      - name: Remove Stale Rolling 'latest' Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes || true
+
+      - name: Publish Rolling 'latest' Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest (${{ github.ref_name }})"
+          body: |
+            Rolling release pointing to `${{ github.ref_name }}` (`${{ github.sha }}`).
+
+            ### Package Assets:
+            - **`web-ide-core-*.tgz`**: Pre-packaged NPM module ready for installation.
+          make_latest: "false"
+          files: |
+            dist/*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
